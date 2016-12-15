@@ -11,7 +11,7 @@ cmdVer = 'tshark -ver |grep -i tshark'
 class Stream(object):
     def __init__(self, sid=None, fmt=None, chs=None, smr=None, cmd=None, type=None):
         self.sid  = sid    # stream id
-        self.fmt  = fmt    # format 16bit 
+        self.fmt  = fmt    # format 16bit
         self.chs  = chs    # number of channels
         self.smr  = smr    # sample rate
         self.cmd  = cmd    # command for extracting payload data from stream
@@ -87,7 +87,7 @@ def get_tshark_version(cmd):
                 elif v[0] == '2' and v[1] > '0': # new tshark use aaf fields
                     return "NEW"
                 else: # old tshark use ieee1722a fields
-                    return "OLD"    
+                    return "OLD"
     return "tshark / wireshark version not found, please install one!"
 
 def get_streams(cmds, v):
@@ -119,20 +119,22 @@ def get_streams(cmds, v):
                             else:
                                 cmdData = 'tshark -r ' + sys.argv[1] + ' -T fields -e ieee1722a.data.sample.sampledata ieee1722a.stream_id == ' + l[0] + ' | tr -d \'\\n\\t\\r:, \''
                                 slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), cmdData, 'a'))
-                    
+
     return slst
 
 def wtf(ss, v):
     for s in ss:
         print s.cmd
         p = subprocess.Popen(s.cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        fname = s.sid + '_' + format_info_vals[s.fmt] + '_' + str(s.chs) + 'ch_' +  sample_rate_type_vals[s.smr] + '.rawavb'
+        fname = s.sid + '_' + format_info_vals[s.fmt] + '_' + str(s.chs) + \
+                'ch_' +  sample_rate_type_vals[s.smr] + \
+                ('.ts' if s.type == 'v' else '.raw')
         f = open(fname, 'wb')
         print 'write file: ' + fname
         for line in p.stdout.readlines():
             f.write(binascii.unhexlify(line))
         f.close()
-            
+
 if len(sys.argv) < 2:
     print "provide a pcap file"
     exit()
@@ -161,4 +163,3 @@ for s in ss:
 
 print '----------------------- Streams found ---------------------------'
 wtf(ss,v)
-
