@@ -6,17 +6,6 @@ import socket
 import sys
 import re
 
-cmdVer = 'tshark -ver |grep -i tshark'
-
-class Stream(object):
-    def __init__(self, sid=None, fmt=None, chs=None, smr=None, cmd=None, type=None):
-        self.sid  = sid    # stream id
-        self.fmt  = fmt    # format 16bit
-        self.chs  = chs    # number of channels
-        self.smr  = smr    # sample rate
-        self.cmd  = cmd    # command for extracting payload data from stream
-        self.type = type   # stream type, a = audio, v = video tv / ts stream
-
 FORMAT_INFO_USER_SPECIFIED = 0
 FORMAT_INFO_32FLOAT        = 1
 FORMAT_INFO_32INTEGER      = 2
@@ -29,7 +18,7 @@ format_info_vals ={
     FORMAT_INFO_32INTEGER:             "32bit.i",
     FORMAT_INFO_24INTEGER:             "24bit.i",
     FORMAT_INFO_16INTEGER:             "16bit.i",
-    0:                                 "NULL"
+    0:                                 "ts"
 }
 
 
@@ -67,14 +56,78 @@ sample_rate_type_vals = {
     SAMPLE_RATE_45RPM:                 "45RPM",
     SAMPLE_RATE_78RPM:                 "78RPM",
     SAMPLE_RATE_RESERVED:              "Reserved",
-    0:                                 "NULL"
+    0:                                 "mpeg"
 }
+
+class Stream(object):
+    def __init__(self, sid=None, fmt=None, chs=None, smr=None, cmd=None, type=None):
+        self.sid  = sid    # stream id
+        self.fmt  = fmt    # format 16bit
+        self.chs  = chs    # number of channels
+        self.smr  = smr    # sample rate
+        self.cmd  = cmd    # command for extracting payload data from stream
+        self.type = type   # stream type, a = audio, v = video tv / ts stream
+
+class AVBExtractor(object):
+    #Class extracting avb data from file of type t, version of thshark v
+    cmdStreams = []
+    cmdData = ''
+    def __init__(self, file=None, type=None, ver=None):
+        self.file = file    # file to extract data from
+        self.type = type    # type to be extracted audio or video
+        self.ver  = ver     # version of wireshark installed
+        self.cmdStreams = []
+        self.cmdData = ''
+        afds = ['stream_id', 'format_info', 'channels_per_frame', 'nominal_sample_rate']
+        vfds = ['stream_id', 'fmt', 'svfield', 'verfield']
+        TsCmd = 'tshark -r '
+        strFds = ''
+        pref = ''
+        if type == 'audio':
+            if ver == "OLD":
+                pref = 'ieee1722a.' #prefix for avb data fields
+            elif ver == "NEW":
+                pref = 'aaf.' #prefix for avb data fields
+            for f in afds:
+                strFds = strFds + ' -e ' + pref + f
+            self.cmdStreams.insert(0,TsCmd + file + ' -T fields' + strFds)
+            self.cmdData = TsCmd + file + ' -T fields -e ' + pref + 'data ' + pref + 'stream_id == '
+        elif type == 'video':
+            pref = 'ieee1722.'
+            for f in vfds:
+                strFds = strFds + ' -e ' + pref + f
+            self.cmdStreams.insert(0,TsCmd + file + ' -T fields' + strFds + ' ' + pref + 'subtype == 0x00')
+            self.cmdData = TsCmd + file + ' -T fields -e ' + pref + 'data ' + pref + 'subtype == 0x00 and ' + pref + 'stream_id == '
+
+    def get_streams(self):
+        slst = []
+        for cmd in self.cmdStreams:
+            #print cmd
+            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            for line in p.stdout.readlines():
+                l = line.split('\t')
+                if len(l) == 4:
+                    if len(l[0])>0:
+                        found = 0
+                        for stream in slst:
+                            if l[0] in stream.sid:
+                                found = 1
+                                break;
+                        if found == 0:
+                            self.cmdData = self.cmdData + l[0] + ' | tr -d \'\\n\\t\\r:, \''
+                            if self.type == 'video': # todo remove this ugly hack
+                                slst.append(Stream (l[0], 0, 0, 0, self.cmdData, self.type))
+                            else:
+                                slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), self.cmdData, self.type))
+        return slst
+
+
 
 def hasNumbers(inputString):
     return any(char.isdigit() for char in inputString)
 
-def get_tshark_version(cmd):
-    print cmd
+def get_tshark_version():
+    cmd= 'tshark -ver |grep -i tshark'
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in p.stdout.readlines():
         lines = line.split(' ')
@@ -90,45 +143,13 @@ def get_tshark_version(cmd):
                     return "OLD"
     return "tshark / wireshark version not found, please install one!"
 
-def get_streams(cmds, v):
-    slst = []
-    for cmd in cmds:
-        print cmd
-        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        for line in p.stdout.readlines():
-            l = line.split('\t')
-            if len(l) == 4:
-                if len(l[0])>0:
-                    found = 0
-                    for stream in slst:
-                        if l[0] in stream.sid:
-                            found = 1
-                            break;
-                    if found == 0:
-                        if v == "NEW":
-                            if('ieee1722.subtype' in cmd): # video stream
-                                cmdData = 'tshark -r ' + sys.argv[1] + ' -T fields -e ieee1722.data ieee1722.subtype == 0x00 and ieee1722.stream_id == ' + l[0] + ' | tr -d \'\\n\\t\\r:, \''
-                                slst.append(Stream (l[0], 0, 0, 0, cmdData, 'v'))
-                            else:
-                                cmdData = 'tshark -r ' + sys.argv[1] + ' -T fields -e aaf.data.sample aaf.stream_id == ' + l[0] + ' | tr -d \'\\n\\t\\r:, \''
-                                slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), cmdData, 'a'))
-                        elif v == "OLD":
-                            if('ieee1722.subtype' in cmd): # video stream
-                                cmdData = 'tshark -r ' + sys.argv[1] + ' -T fields -e ieee1722.data ieee1722.subtype == 0x00 and ieee1722.stream_id == ' + l[0] + ' | tr -d \'\\n\\t\\r:, \''
-                                slst.append(Stream (l[0], 0, 0, 0, cmdData, 'v'))
-                            else:
-                                cmdData = 'tshark -r ' + sys.argv[1] + ' -T fields -e ieee1722a.data.sample.sampledata ieee1722a.stream_id == ' + l[0] + ' | tr -d \'\\n\\t\\r:, \''
-                                slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), cmdData, 'a'))
-
-    return slst
-
-def wtf(ss, v):
+def wtf(ss):
     for s in ss:
-        print s.cmd
+        #print s.cmd
         p = subprocess.Popen(s.cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         fname = s.sid + '_' + format_info_vals[s.fmt] + '_' + str(s.chs) + \
                 'ch_' +  sample_rate_type_vals[s.smr] + \
-                ('.ts' if s.type == 'v' else '.raw')
+                ('.mpegts' if s.type == 'video' else '.raw')
         f = open(fname, 'wb')
         print 'write file: ' + fname
         for line in p.stdout.readlines():
@@ -139,27 +160,16 @@ if len(sys.argv) < 2:
     print "provide a pcap file"
     exit()
 
-v = get_tshark_version(cmdVer)
-cmdStreams = []
-if v == "OLD":
-    audio = 'tshark -r ' + sys.argv[1] + ' -T fields -e ieee1722a.stream_id -e ieee1722a.format_info -e ieee1722a.channels_per_frame -e ieee1722a.nominal_sample_rate'
-    video = 'tshark -r ' + sys.argv[1] + ' -T fields -e ieee1722.stream_id -e ieee1722.fmt -e ieee1722.subtype -e ieee1722.verfield ieee1722.subtype == 0x00'
-    cmdStreams.insert(0, audio)
-    cmdStreams.insert(1, video)
-elif v == "NEW":
-    audio = 'tshark -r ' + sys.argv[1] + ' -T fields -e aaf.stream_id -e aaf.format_info -e aaf.channels_per_frame -e aaf.nominal_sample_rate'
-    video = 'tshark -r ' + sys.argv[1] + ' -T fields -e ieee1722.stream_id -e ieee1722.fmt -e ieee1722.subtype -e ieee1722.verfield ieee1722.subtype == 0x00'
-    cmdStreams.insert(0, audio)
-    cmdStreams.insert(1, video)
-else:
-    print v
-    exit()
+v = get_tshark_version()
 
-ss = get_streams(cmdStreams,v)
+aExt = AVBExtractor(sys.argv[1], 'audio', v)
+vExt = AVBExtractor(sys.argv[1], 'video', v)
+ss = aExt.get_streams()
+ss = ss + vExt.get_streams()
 
-print '----------------------- Streams found ---------------------------'
+print '----------------------- streams found ---------------------------'
 for s in ss:
     print 'sid: ' + s.sid + ' fmt: ' + format_info_vals[s.fmt] + ' channels: ' + str(s.chs) + ' srate: ' + sample_rate_type_vals[s.smr]
+print '----------------------- streams found ---------------------------'
 
-print '----------------------- Streams found ---------------------------'
-wtf(ss,v)
+wtf(ss)
