@@ -72,7 +72,7 @@ class AVBExtractor(object):
     #Class extracting avb data from file of type t, version of thshark v
     cmdStreams = []
     cmdData = ''
-    def __init__(self, file=None, type=None, ver=None):
+    def __init__(self, file=None, type=None, ver=None, exe=None):
         self.file = file    # file to extract data from
         self.type = type    # type to be extracted audio or video
         self.ver  = ver     # version of wireshark installed
@@ -80,7 +80,7 @@ class AVBExtractor(object):
         self.cmdData = ''
         afds = ['stream_id', 'format_info', 'channels_per_frame', 'nominal_sample_rate']
         vfds = ['stream_id', 'fmt', 'svfield', 'verfield']
-        TsCmd = 'tshark -r '
+        TsCmd = exe + ' -r '
         strFds = ''
         pref = ''
         if type == 'audio':
@@ -126,8 +126,14 @@ class AVBExtractor(object):
 def hasNumbers(inputString):
     return any(char.isdigit() for char in inputString)
 
-def get_tshark_version():
-    cmd= 'tshark -ver |grep -i tshark'
+def tsharkPath():
+    cmd= 'which tshark'
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for line in p.stdout.readlines():
+        return line.rstrip()
+    return ''
+def get_tshark_version(p):
+    cmd = p + ' -ver |grep -i tshark'
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in p.stdout.readlines():
         lines = line.split(' ')
@@ -160,10 +166,14 @@ if len(sys.argv) < 2:
     print "provide a pcap file"
     exit()
 
-v = get_tshark_version()
+p=tsharkPath()
+if len(p)==0:
+    print "no wireshark/tshark installation found, please install one"
 
-aExt = AVBExtractor(sys.argv[1], 'audio', v)
-vExt = AVBExtractor(sys.argv[1], 'video', v)
+v = get_tshark_version(p)
+
+aExt = AVBExtractor(sys.argv[1], 'audio', v, p)
+vExt = AVBExtractor(sys.argv[1], 'video', v, p)
 ss = aExt.get_streams()
 ss = ss + vExt.get_streams()
 
