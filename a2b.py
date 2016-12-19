@@ -169,17 +169,20 @@ if len(sys.argv) < 2:
 p=tsharkPath()
 if len(p)==0:
     print "no wireshark/tshark installation found, please install one"
+    exit()
 
 v = get_tshark_version(p)
+if v=='OLD' or v=='NEW':
+    aExt = AVBExtractor(sys.argv[1], 'audio', v, p)
+    vExt = AVBExtractor(sys.argv[1], 'video', v, p)
+    ss = aExt.get_streams()
+    ss = ss + vExt.get_streams()
 
-aExt = AVBExtractor(sys.argv[1], 'audio', v, p)
-vExt = AVBExtractor(sys.argv[1], 'video', v, p)
-ss = aExt.get_streams()
-ss = ss + vExt.get_streams()
-
-print '----------------------- streams found ---------------------------'
-for s in ss:
-    print 'sid: ' + s.sid + ' fmt: ' + format_info_vals[s.fmt] + ' channels: ' + str(s.chs) + ' srate: ' + sample_rate_type_vals[s.smr]
-print '----------------------- streams found ---------------------------'
-
-wtf(ss)
+    print '----------------------- streams found ---------------------------'
+    for s in ss:
+        print 'sid: ' + s.sid + ' fmt: ' + format_info_vals[s.fmt] + \
+        ' channels: ' + str(s.chs) + ' srate: ' + sample_rate_type_vals[s.smr]
+    print '----------------------- streams found ---------------------------'
+    wtf(ss)
+else:
+    print v
