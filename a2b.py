@@ -60,13 +60,14 @@ sample_rate_type_vals = {
 }
 
 class Stream(object):
-    def __init__(self, sid=None, fmt=None, chs=None, smr=None, cmd=None, type=None):
+    def __init__(self, sid=None, fmt=None, chs=None, smr=None, cmd=None, type=None, stime=None):
         self.sid  = sid    # stream id
         self.fmt  = fmt    # format 16bit
         self.chs  = chs    # number of channels
         self.smr  = smr    # sample rate
         self.cmd  = cmd    # command for extracting payload data from stream
         self.type = type   # stream type, a = audio, v = video tv / ts stream
+        self.stime = stime   # frma.time of first occurence
 
 class AVBExtractor(object):
     #Class extracting avb data from file of type t, version of thshark v
@@ -90,23 +91,23 @@ class AVBExtractor(object):
                 pref = 'aaf.' #prefix for avb data fields
             for f in afds:
                 strFds = strFds + ' -e ' + pref + f
-            self.cmdStreams.insert(0,TsCmd + file + ' -T fields' + strFds)
+            self.cmdStreams.insert(0,TsCmd + file + ' -T fields' + strFds + ' -e frame.time')
             self.cmdData = TsCmd + file + ' -T fields -e ' + pref + 'data ' + pref + 'stream_id == '
         elif type == 'video':
             pref = 'ieee1722.'
             for f in vfds:
                 strFds = strFds + ' -e ' + pref + f
-            self.cmdStreams.insert(0,TsCmd + file + ' -T fields' + strFds + ' ' + pref + 'subtype == 0x00')
+            self.cmdStreams.insert(0,TsCmd + file + ' -T fields' + strFds + ' -e frame.time ' + pref + 'subtype == 0x00')
             self.cmdData = TsCmd + file + ' -T fields -e ' + pref + 'data ' + pref + 'subtype == 0x00 and ' + pref + 'stream_id == '
 
     def get_streams(self):
         slst = []
         for cmd in self.cmdStreams:
-            #print cmd
+            print cmd
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             for line in p.stdout.readlines():
                 l = line.split('\t')
-                if len(l) == 4:
+                if len(l) == 5:
                     if len(l[0])>0:
                         found = 0
                         for stream in slst:
@@ -116,9 +117,9 @@ class AVBExtractor(object):
                         if found == 0:
                             self.cmdData = self.cmdData + l[0] + ' | tr -d \'\\n\\t\\r:, \''
                             if self.type == 'video': # todo remove this ugly hack
-                                slst.append(Stream (l[0], 0, 0, 0, self.cmdData, self.type))
+                                slst.append(Stream (l[0], 0, 0, 0, self.cmdData, self.type, l[4].rstrip()))
                             else:
-                                slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), self.cmdData, self.type))
+                                slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), self.cmdData, self.type, l[4].rstrip()))
         return slst
 
 
@@ -127,11 +128,15 @@ def hasNumbers(inputString):
     return any(char.isdigit() for char in inputString)
 
 def tsharkPath():
+    import sys
     cmd= 'which tshark'
+    if sys.platform=="win32":
+        cmd= 'where tshark'
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in p.stdout.readlines():
         return line.rstrip()
-    return ''
+    return None
+
 def get_tshark_version(p):
     cmd = p + ' -ver |grep -i tshark'
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -153,7 +158,8 @@ def wtf(ss):
     for s in ss:
         #print s.cmd
         p = subprocess.Popen(s.cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        fname = s.sid + '_' + format_info_vals[s.fmt] + '_' + str(s.chs) + \
+        fname = s.sid + '_' + s.stime.translate(None, ' ') + \
+                format_info_vals[s.fmt] + '_' + str(s.chs) + \
                 'ch_' +  sample_rate_type_vals[s.smr] + \
                 ('.mpegts' if s.type == 'video' else '.raw')
         f = open(fname, 'wb')
@@ -167,7 +173,7 @@ if len(sys.argv) < 2:
     exit()
 
 p=tsharkPath()
-if len(p)==0:
+if p==None:
     print "no wireshark/tshark installation found, please install one"
     exit()
 
@@ -181,7 +187,8 @@ if v=='OLD' or v=='NEW':
     print '----------------------- streams found ---------------------------'
     for s in ss:
         print 'sid: ' + s.sid + ' fmt: ' + format_info_vals[s.fmt] + \
-        ' channels: ' + str(s.chs) + ' srate: ' + sample_rate_type_vals[s.smr]
+        ' channels: ' + str(s.chs) + ' srate: ' + sample_rate_type_vals[s.smr] + \
+        ' time: ' + s.stime
     print '----------------------- streams found ---------------------------'
     wtf(ss)
 else:
