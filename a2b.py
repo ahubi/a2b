@@ -103,7 +103,7 @@ class AVBExtractor(object):
     def get_streams(self):
         slst = []
         for cmd in self.cmdStreams:
-            print cmd
+            #print cmd
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             for line in p.stdout.readlines():
                 l = line.split('\t')
@@ -115,11 +115,11 @@ class AVBExtractor(object):
                                 found = 1
                                 break;
                         if found == 0:
-                            self.cmdData = self.cmdData + l[0] + ' | tr -d \'\\n\\t\\r:, \''
+                            cmdData = self.cmdData + l[0]
                             if self.type == 'video': # todo remove this ugly hack
-                                slst.append(Stream (l[0], 0, 0, 0, self.cmdData, self.type, l[4].rstrip()))
+                                slst.append(Stream (l[0], 0, 0, 0, cmdData, self.type, l[4].rstrip()))
                             else:
-                                slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), self.cmdData, self.type, l[4].rstrip()))
+                                slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), cmdData, self.type, l[4].rstrip()))
         return slst
 
 
@@ -128,21 +128,24 @@ def hasNumbers(inputString):
     return any(char.isdigit() for char in inputString)
 
 def tsharkPath():
-    import sys
     cmd= 'which tshark'
     if sys.platform=="win32":
         cmd= 'where tshark'
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in p.stdout.readlines():
-        return line.rstrip()
+        if len(line)>0:
+            return '"' + line.rstrip() + '"'
     return None
 
 def get_tshark_version(p):
     cmd = p + ' -ver |grep -i tshark'
+    if sys.platform == "win32":
+        cmd =p + ' -ver |findstr -i tshark'
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for line in p.stdout.readlines():
         lines = line.split(' ')
         for l in lines:
+            #print l
             if hasNumbers(l):
                 print "tshark version: " + l
                 v = l.split('.')
@@ -152,19 +155,23 @@ def get_tshark_version(p):
                     return "NEW"
                 else: # old tshark use ieee1722a fields
                     return "OLD"
-    return "tshark / wireshark version not found, please install one!"
+    return "tshark / wireshark version not matching, check your wireshark version!"
 
 def wtf(ss):
     for s in ss:
         #print s.cmd
         p = subprocess.Popen(s.cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        fname = s.sid + '_' + s.stime.translate(None, ' ') + \
+        fname = s.sid + '_' + s.stime.translate(None, ',: ') + \
                 format_info_vals[s.fmt] + '_' + str(s.chs) + \
                 'ch_' +  sample_rate_type_vals[s.smr] + \
                 ('.mpegts' if s.type == 'video' else '.raw')
         f = open(fname, 'wb')
         print 'write file: ' + fname
         for line in p.stdout.readlines():
+            line = line.replace("\r","")
+            line = line.replace("\n","")
+            line = line.replace("\r","")
+            line = line.replace(":","")
             f.write(binascii.unhexlify(line))
         f.close()
 
@@ -173,6 +180,7 @@ if len(sys.argv) < 2:
     exit()
 
 p=tsharkPath()
+#print p
 if p==None:
     print "no wireshark/tshark installation found, please install one"
     exit()
@@ -186,9 +194,9 @@ if v=='OLD' or v=='NEW':
 
     print '----------------------- streams found ---------------------------'
     for s in ss:
-        print 'sid: ' + s.sid + ' fmt: ' + format_info_vals[s.fmt] + \
-        ' channels: ' + str(s.chs) + ' srate: ' + sample_rate_type_vals[s.smr] + \
-        ' time: ' + s.stime
+        print 'sid: ' + s.sid + ' ' + format_info_vals[s.fmt] + \
+        ',' + str(s.chs) + ',' + sample_rate_type_vals[s.smr] + \
+        ' ' + s.stime
     print '----------------------- streams found ---------------------------'
     wtf(ss)
 else:
