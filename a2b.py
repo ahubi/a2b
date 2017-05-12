@@ -1,4 +1,3 @@
-# author: Artur Hubert
 # Date: 21.10.2016
 import subprocess
 import binascii
