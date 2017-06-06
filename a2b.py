@@ -167,9 +167,8 @@ def wtf(ss):
         f = open(fname, 'wb')
         print 'write file: ' + fname
         for line in p.stdout.readlines():
-            line = line.replace("\r","")
-            line = line.replace("\n","")
-            line = line.replace("\r","")
+            line = line.rstrip()
+            line = line.lstrip()
             line = line.replace(":","")
             f.write(binascii.unhexlify(line))
         f.close()
