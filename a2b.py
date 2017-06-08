@@ -4,6 +4,8 @@ import binascii
 import socket
 import sys
 import re
+import struct
+import array
 
 FORMAT_INFO_USER_SPECIFIED = 0
 FORMAT_INFO_32FLOAT        = 1
@@ -11,15 +13,15 @@ FORMAT_INFO_32INTEGER      = 2
 FORMAT_INFO_24INTEGER      = 3
 FORMAT_INFO_16INTEGER      = 4
 
-format_info_vals ={
-    FORMAT_INFO_USER_SPECIFIED:        "User specified",
-    FORMAT_INFO_32FLOAT:               "32bit.f",
-    FORMAT_INFO_32INTEGER:             "32bit.i",
-    FORMAT_INFO_24INTEGER:             "24bit.i",
-    FORMAT_INFO_16INTEGER:             "16bit.i",
-    0:                                 "ts"
+#key: (number of bytes as string, number of bits, python type code)
+format_info ={
+    FORMAT_INFO_USER_SPECIFIED:        ("User specified", 0, 'None'),
+    FORMAT_INFO_32FLOAT:               ("32bit.f", 32, 'f'),
+    FORMAT_INFO_32INTEGER:             ("32bit.i", 32, 'l'),
+    FORMAT_INFO_24INTEGER:             ("24bit.i", 24, 'None'),
+    FORMAT_INFO_16INTEGER:             ("16bit.i", 16, 'h'),
+    0:                                 ("ts", 0, 'None')
 }
-
 
 SAMPLE_RATE_USER_SPECIFIED = 0
 SAMPLE_RATE_8K             = 1
@@ -37,25 +39,25 @@ SAMPLE_RATE_33RPM3_REV     = 12
 SAMPLE_RATE_45RPM          = 13
 SAMPLE_RATE_78RPM          = 14
 SAMPLE_RATE_RESERVED       = 15
-
-sample_rate_type_vals = {
-    SAMPLE_RATE_USER_SPECIFIED:        "User specified",
-    SAMPLE_RATE_8K:                    "8kHz",
-    SAMPLE_RATE_16K:                   "16kHz",
-    SAMPLE_RATE_32K:                   "32kHz",
-    SAMPLE_RATE_44K1:                  "44.1kHz",
-    SAMPLE_RATE_48K:                   "48kHz",
-    SAMPLE_RATE_88K2:                  "88.2kHz",
-    SAMPLE_RATE_96K:                   "96kHz",
-    SAMPLE_RATE_176K4:                 "176.4kHz",
-    SAMPLE_RATE_192K:                  "192kHz",
-    SAMPLE_RATE_16RPM:                 "24kHz",
-    SAMPLE_RATE_33RPM3:                "33 1-3 RPM",
-    SAMPLE_RATE_33RPM3_REV:            "33 1-3 RPM In Reverse",
-    SAMPLE_RATE_45RPM:                 "45RPM",
-    SAMPLE_RATE_78RPM:                 "78RPM",
-    SAMPLE_RATE_RESERVED:              "Reserved",
-    0:                                 "mpeg"
+#key: (sample rate as string, sample rate as number)
+sample_rate = {
+    SAMPLE_RATE_USER_SPECIFIED:        ("User specified", 0),
+    SAMPLE_RATE_8K:                    ("8kHz", 8000),
+    SAMPLE_RATE_16K:                   ("16kHz", 16000),
+    SAMPLE_RATE_32K:                   ("32kHz", 32000),
+    SAMPLE_RATE_44K1:                  ("44.1kHz",44100),
+    SAMPLE_RATE_48K:                   ("48kHz", 48000),
+    SAMPLE_RATE_88K2:                  ("88.2kHz", 882000),
+    SAMPLE_RATE_96K:                   ("96kHz", 96000),
+    SAMPLE_RATE_176K4:                 ("176.4kHz", 1764000),
+    SAMPLE_RATE_192K:                  ("192kHz", 192000),
+    SAMPLE_RATE_16RPM:                 ("24kHz", 24000),
+    SAMPLE_RATE_33RPM3:                ("33 1-3 RPM", 33000), # not sure this is correct number
+    SAMPLE_RATE_33RPM3_REV:            ("33 1-3 RPM In Reverse", 330000),
+    SAMPLE_RATE_45RPM:                 ("45RPM", 45000),
+    SAMPLE_RATE_78RPM:                 ("78RPM", 45000),
+    SAMPLE_RATE_RESERVED:              ("Reserved", 0),
+    0:                                 ("mpeg", 0)
 }
 
 class Stream(object):
@@ -121,8 +123,6 @@ class AVBExtractor(object):
                                 slst.append(Stream (l[0], int(l[1],16), int(l[2],10), int(l[3],16), cmdData, self.type, l[4].rstrip()))
         return slst
 
-
-
 def hasNumbers(inputString):
     return any(char.isdigit() for char in inputString)
 
@@ -156,21 +156,58 @@ def get_tshark_version(p):
                     return "OLD"
     return "tshark / wireshark version not matching, check your wireshark version!"
 
+def hexstring_to_bytes(hex_string):
+    res = ""
+    for i in range(0, len(hex_string), 2):
+        res += chr(int(hex_string[i:i+2], 16))
+    return res
+# see http://soundfile.sapp.org/doc/WaveFormat/
+def write_wav_header(f, data_len, chs, samplerate, bits_per_sample, fmt=1):
+    f.seek(0, 0)
+    f.write("RIFF")
+    f.write(struct.pack('<L', 36 + data_len))
+    f.write("WAVEfmt ")
+    f.write(struct.pack('<L', 16))
+    f.write(struct.pack('<H', fmt))
+    f.write(struct.pack('<H', chs))
+    f.write(struct.pack('<L', samplerate))
+    f.write(struct.pack('<L', samplerate * chs * bits_per_sample / 8))
+    f.write(struct.pack('<H', chs * bits_per_sample / 8))
+    f.write(struct.pack('<H', bits_per_sample))
+    f.write("data")
+    f.write(struct.pack('<L', data_len))
+
+#x - data, t - type('h')
+def swap_bytes(x, t):
+    if t=='None':
+        return x
+    else:
+        y = array.array(t, x)
+        y.byteswap()
+        return y
+
 def wtf(ss):
     for s in ss:
         #print s.cmd
+        nbytes = 0
         p = subprocess.Popen(s.cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         fname = s.sid + '_' + s.stime.translate(None, ',: ') + \
-                format_info_vals[s.fmt] + '_' + str(s.chs) + \
-                'ch_' +  sample_rate_type_vals[s.smr] + \
-                ('.mpegts' if s.type == 'video' else '.raw')
+                format_info[s.fmt][0] + '_' + str(s.chs) + 'ch_' + \
+                sample_rate[s.smr][0] + \
+                ('.mpegts' if s.type == 'video' else '.wav')
         f = open(fname, 'wb')
-        print 'write file: ' + fname
+        print 'wtf: ' + fname
         for line in p.stdout.readlines():
             line = line.rstrip()
             line = line.lstrip()
             line = line.replace(":","")
-            f.write(binascii.unhexlify(line))
+            #swap bytes necessary due to big endian on network, but little endian in WAVE format
+            f.write(swap_bytes(binascii.unhexlify(line), format_info[s.fmt][2]))
+            nbytes += len(line)
+        if s.type=='audio':
+            write_wav_header(f, nbytes, s.chs,
+                            sample_rate[s.smr][1],
+                            format_info[s.fmt][1])
         f.close()
 
 if len(sys.argv) < 2:
@@ -192,8 +229,8 @@ if v=='OLD' or v=='NEW':
 
     print '----------------------- streams found ---------------------------'
     for s in ss:
-        print 'sid: ' + s.sid + ' ' + format_info_vals[s.fmt] + \
-        ',' + str(s.chs) + ',' + sample_rate_type_vals[s.smr] + \
+        print 'sid: ' + s.sid + ' ' + format_info[s.fmt][0] + \
+        ',' + str(s.chs) + ',' + sample_rate[s.smr][0] + \
         ' ' + s.stime
     print '----------------------- streams found ---------------------------'
     wtf(ss)
